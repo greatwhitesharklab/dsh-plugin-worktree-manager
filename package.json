@@ -1,0 +1,30 @@
+{
+  "name": "dsh-plugin-worktree-manager",
+  "version": "0.1.0",
+  "description": "Manage git worktrees of the current DSH workspace from a sidebar panel: list, create (feat/<issue>-<name> on ../wt/), remove, and prune.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "git",
+    "worktree",
+    "git-worktree"
+  ],
+  "license": "MIT",
+  "author": "Fred Gu",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FredGoo/dsh-plugin-worktree-manager.git"
+  },
+  "homepage": "https://github.com/FredGoo/dsh-plugin-worktree-manager#readme",
+  "bugs": {
+    "url": "https://github.com/FredGoo/dsh-plugin-worktree-manager/issues"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "lint": "node --check src/host.js && node --check src/client.js"
+  }
+}
