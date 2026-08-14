@@ -295,5 +295,14 @@ return {
       }
       return { ok: true, message: '已切回主分支（主目录）' }
     })
+
+    // ---- All bindings, for the sidebar browser badges.
+    harness.handle('wt.markers', async () => {
+      const out = []
+      for (const [sessionId, b] of bindings) {
+        out.push({ sessionId, path: b.path, branch: b.branch })
+      }
+      return { ok: true, bindings: out }
+    })
   },
 }

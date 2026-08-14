@@ -18,6 +18,7 @@
  * Plain JavaScript only: React.createElement, no JSX/TS/import.
  */
 return {
+  inject: ['timer'],
   apply(ctx) {
     const slots = ctx.get('slots')
     if (slots === undefined) return
@@ -65,6 +66,31 @@ return {
 .wtm-menu-item span { color: var(--dsw-alias-label-tertiary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wtm-menu-head { font-size: 11px; color: var(--dsw-alias-label-tertiary); padding: 4px 8px 2px; }
 .wtm-menu-hint { font-size: 11px; color: var(--dsw-alias-label-tertiary); padding: 6px 8px 2px; border-top: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.06)); margin-top: 4px; line-height: 16px; }
+
+/* ---- two-line session rows with a worktree badge ---- */
+.wtm-list { padding: 4px 8px; }
+.wtm-group-title {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 13px; font-weight: 600;
+  color: var(--dsw-alias-label-primary); cursor: pointer; border-radius: 6px; user-select: none;
+}
+.wtm-group-title:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.wtm-group-chevron { font-size: 10px; color: var(--dsw-alias-label-tertiary); transition: transform .15s; }
+.wtm-group-chevron.wtm-open { transform: rotate(90deg); }
+.wtm-session {
+  display: block; width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+  padding: 6px 8px 6px 26px; border-radius: 8px; color: var(--dsw-alias-label-primary);
+}
+.wtm-session:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.wtm-session.wtm-current { background: var(--dsw-alias-interactive-bg-hover); }
+.wtm-s-title { font-size: 13px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wtm-s-badge {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 3px;
+  font-size: 11px; line-height: 16px; color: var(--dsw-alias-state-business-primary, #3b82f6);
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px; padding: 0 8px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box;
+}
+.wtm-s-time { color: var(--dsw-alias-label-tertiary); font-size: 11px; margin-top: 2px; }
+.wtm-empty { color: var(--dsw-alias-label-tertiary); font-size: 12px; padding: 8px 12px; }
 `
     styles.insert(css)
 
@@ -161,9 +187,93 @@ return {
       ]))
     }
 
+    // ---- Sidebar workspace browser replacement: two-line rows with a
+    // worktree badge. Polls wt.markers via the timer service (no setInterval).
+    function WorktreeSessionBrowser({ useSessions, useWorkspaces }) {
+      const list = useSessions((s) => s)
+      const workspaces = useWorkspaces((s) => s.items) || []
+      const [markers, setMarkers] = React.useState({})
+      const [expanded, setExpanded] = React.useState({})
+
+      const loadMarkers = React.useCallback(async () => {
+        const res = await call('wt.markers', {})
+        if (res && res.ok) {
+          const map = {}
+          for (const m of (res.bindings || [])) map[m.sessionId] = m
+          setMarkers(map)
+        }
+      }, [])
+
+      React.useEffect(() => {
+        loadMarkers()
+        const disposer = ctx.interval(() => {
+          loadMarkers()
+        }, 5000)
+        return disposer
+      }, [loadMarkers])
+
+      const byId = list.byId || {}
+      const currentId = list.current
+      const groups = (workspaces || []).map((ws) => ({
+        key: ws.workspaceId,
+        title: ws.title,
+        path: ws.path,
+        sessionIds: ws.sessionIds || [],
+      }))
+      // sessions not accounted by any workspace fall into an ungrouped bucket
+      const accounted = new Set(groups.flatMap((g) => g.sessionIds))
+      const strayIds = (list.ids || []).filter((id) => byId[id] && !accounted.has(id))
+      if (strayIds.length > 0) groups.push({ key: '__stray__', title: '未分组', path: null, sessionIds: strayIds })
+
+      const relTime = (ts) => {
+        if (!ts) return ''
+        const diff = Date.now() - ts
+        if (diff < 60000) return '刚刚'
+        if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前'
+        if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前'
+        return Math.floor(diff / 86400000) + '天前'
+      }
+
+      return React.createElement('div', { className: 'wtm-list' }, groups.map((group) => {
+        const open = expanded[group.key] !== false
+        const visible = group.sessionIds.map((id) => byId[id]).filter(Boolean)
+        return React.createElement('div', { key: group.key }, [
+          React.createElement('div', {
+            key: 'g',
+            className: 'wtm-group-title',
+            onClick: () => setExpanded((e) => ({ ...e, [group.key]: !open })),
+          }, [
+            React.createElement('span', { key: 'c', className: 'wtm-group-chevron' + (open ? ' wtm-open' : '') }, '▶'),
+            React.createElement('span', { key: 't' }, group.title + (group.sessionIds.length ? ' (' + group.sessionIds.length + ')' : '')),
+          ]),
+          open ? visible.map((s) => {
+            const marker = markers[s.id]
+            const label = marker ? marker.path.split('/').filter(Boolean).slice(-1)[0] || marker.path : null
+            return React.createElement('button', {
+              key: s.id,
+              type: 'button',
+              className: 'wtm-session' + (s.id === currentId ? ' wtm-current' : ''),
+              onClick: () => { try { ctx.sessions.open(s.id) } catch (e) {} },
+            }, [
+              React.createElement('div', { key: 't', className: 'wtm-s-title' }, s.displayTitle || s.title || s.id),
+              marker ? React.createElement('div', { key: 'b', className: 'wtm-s-badge', title: marker.path }, [
+                React.createElement('span', { key: 'i' }, '⎇'),
+                React.createElement('span', { key: 'n' }, label + (marker.branch ? ' · ' + marker.branch : '')),
+              ]) : null,
+              React.createElement('div', { key: 'time', className: 'wtm-s-time' }, relTime(s.updatedAt)),
+            ])
+          }) : null,
+        ])
+      }))
+    }
+
     slots.inject('conversation.input.dock', () => slots.register(
       { name: 'conversation.input.dock', id: 'worktree-dock' },
       (props) => React.createElement(WorktreeDock, props),
+    ))
+    slots.inject('sidebar.workspaces', () => slots.register(
+      { name: 'sidebar.workspaces', id: 'worktree-browser' },
+      (props) => React.createElement(WorktreeSessionBrowser, props),
     ))
   },
 }
