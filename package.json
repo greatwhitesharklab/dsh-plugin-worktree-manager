@@ -1,7 +1,8 @@
 {
   "name": "dsh-plugin-worktree-manager",
-  "version": "0.0.1",
-  "description": "Manage git worktrees of the current DSH workspace from a sidebar panel: list, create (feat/<issue>-<name> on ../wt/), remove, and prune.",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Codex-style git worktree manager for DeepSeek Harness: a new-session start-mode picker (create worktree by default / current branch / existing), short per-session branch badges, and an agent-facing worktree tool. Profile-mounted static plugin.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -21,10 +22,20 @@
   "bugs": {
     "url": "https://github.com/greatwhitesharklab/dsh-plugin-worktree-manager/issues"
   },
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.bundle.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
   "files": [
     "src"
   ],
   "scripts": {
-    "lint": "node --check src/host.js && node --check src/client.js"
+    "lint": "node --check src/index.js && node --check src/client.bundle.js"
   }
 }
