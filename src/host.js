@@ -2,12 +2,14 @@
  * Host half of the dsh-plugin-worktree-manager plugin.
  *
  * Runs git worktree commands through the DSH `shell` service and exposes
- * four Package-private RPC handlers consumed by the browser half:
+ * five Package-private RPC handlers consumed by the browser half:
  *
- *   wt.list   -> parse `git worktree list --porcelain`
- *   wt.add    -> create `../wt/<issue>-<name>` on `feat/<issue>-<name>`
- *   wt.remove -> `git worktree remove [--force]`
- *   wt.prune  -> `git worktree prune`
+ *   wt.list     -> parse `git worktree list --porcelain` (+ registered flag)
+ *   wt.register -> workspaceRegistry.create(path) so a worktree appears in
+ *                  the sidebar workspace area
+ *   wt.add      -> create `../wt/<issue>-<name>` on `feat/<issue>-<name>`
+ *   wt.remove   -> `git worktree remove [--force]` (+ cleanup registration)
+ *   wt.prune    -> `git worktree prune`
  *
  * The main repository directory is resolved from the workspace registry
  * (current session's workspace, else the first registered workspace); a
@@ -72,7 +74,7 @@ return {
         if (line.trim() === '') { current = null; continue }
         if (line.startsWith('worktree ')) {
           const path = line.slice('worktree '.length).trim()
-          current = { path, branch: null, head: null, locked: false, prunable: false, main: path === basePath }
+          current = { path, branch: null, head: null, locked: false, prunable: false, main: path === basePath, registered: false }
           entries.push(current)
         } else if (current) {
           if (line.startsWith('HEAD ')) current.head = line.slice(5).trim()
@@ -92,13 +94,42 @@ return {
       return 'release/' + y + m + day
     }
 
+    async function isRegistered(path) {
+      const registry = ctx.get('workspaceRegistry')
+      if (registry === undefined) return false
+      try {
+        const existing = await registry.resolveByPath(path)
+        return existing !== undefined
+      } catch (e) {
+        return false
+      }
+    }
+
     harness.handle('wt.list', async (args) => {
       const base = await baseDirOf(args)
       if (!base) return { ok: false, message: '无法确定主目录（没有可用的工作区）' }
       const res = await runGit(base, ['-C', base, 'worktree', 'list', '--porcelain'])
       if (!res.ok) return res
       const worktrees = parsePorcelain(res.stdout, base)
+      for (const wt of worktrees) wt.registered = await isRegistered(wt.path)
       return { ok: true, basePath: base, worktrees }
+    })
+
+    harness.handle('wt.register', async (args) => {
+      const base = await baseDirOf(args)
+      if (!base) return { ok: false, message: '无法确定主目录（没有可用的工作区）' }
+      const path = String((args && args.path) || '').trim()
+      if (!path) return { ok: false, message: '缺少 worktree 路径' }
+      const registry = ctx.get('workspaceRegistry')
+      if (registry === undefined) return { ok: false, message: '工作区注册表不可用' }
+      try {
+        const existing = await registry.resolveByPath(path)
+        if (existing !== undefined) return { ok: true, already: true, message: '已是工作区' }
+        const workspace = await registry.create(path)
+        return { ok: true, workspaceId: workspace.id, message: '已注册为工作区：' + path }
+      } catch (e) {
+        return { ok: false, message: '注册失败：' + String((e && e.message) || e) }
+      }
     })
 
     harness.handle('wt.add', async (args) => {
@@ -142,6 +173,14 @@ return {
       cmd.push(path)
       const res = await runGit(base, cmd)
       if (!res.ok) return res
+      // If this worktree was registered as a workspace, clean up the registration.
+      const registry = ctx.get('workspaceRegistry')
+      if (registry !== undefined) {
+        try {
+          const existing = await registry.resolveByPath(path)
+          if (existing !== undefined) await registry.delete(existing.id)
+        } catch (e) {}
+      }
       return { ok: true, message: '已移除 worktree ' + path }
     })
 

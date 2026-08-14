@@ -10,6 +10,7 @@ Manage `git worktree`s of your current DeepSeek Harness workspace — right from
 - **Worktree panel** — a floating panel that lists every worktree of the current workspace:
   - main repo marked with a green dot, worktrees with a blue dot;
   - branch name, path, and `locked` / `prunable` badges;
+  - a **register** action per worktree (`workspaceRegistry.create`) so it appears in the sidebar workspace area, marked with an `在工作区` badge; removing it cleans up the registration;
   - **refresh** and **prune** actions.
 - **Create** — type an optional issue id plus a semantic name, and the plugin:
   - creates branch `feat/<issue>-<name>` (or `feat/<name>` without an issue);
@@ -21,7 +22,7 @@ Manage `git worktree`s of your current DeepSeek Harness workspace — right from
 
 | | |
 |---|---|
-| Host half | Runs git commands through the DSH `shell` service and exposes `wt.list` / `wt.add` / `wt.remove` / `wt.prune` package-private RPC handlers. Resolves the main repo from the workspace registry (current session's workspace). |
+| Host half | Runs git commands through the DSH `shell` service and exposes `wt.list` / `wt.register` / `wt.add` / `wt.remove` / `wt.prune` package-private RPC handlers. Resolves the main repo from the workspace registry (current session's workspace). |
 | Client half | Registers the sidebar footer action and the shell-overlay panel. Calls the host half via `host.call`. |
 
 The plugin is a **dynamic Cordis plugin**: a host body and a client body, plain JavaScript (no build step).
@@ -38,6 +39,7 @@ The plugin is a **dynamic Cordis plugin**: a host body and a client body, plain 
 ## 📖 Usage
 
 - **List** — opening the panel runs `git worktree list --porcelain` in the main repo and parses the result.
+- **Register** — click **注册** on a worktree row to make it appear in the sidebar workspace area (`workspaceRegistry.create`); registered rows show an `在工作区` badge and removing the worktree cleans up its registration.
 - **Create** — issue (optional) + semantic name, e.g. issue `587` and name `loan-migration-data-repair` → branch `feat/587-loan-migration-data-repair`, directory `../wt/587-loan-migration-data-repair/`.
 - **Remove** — the main repo row cannot be removed; worktree rows ask for confirmation first.
 - **Prune** — `git worktree prune` to drop stale references.
@@ -46,7 +48,7 @@ The plugin is a **dynamic Cordis plugin**: a host body and a client body, plain 
 
 ## 🔒 Notes
 
-- The plugin never registers worktrees as DSH workspaces: your sidebar keeps grouping sessions by the main directory.
+- The plugin never registers worktrees as DSH workspaces automatically: registration is on-demand (the per-row **注册** action), so your sidebar keeps grouping sessions by the main directory unless you opt a worktree in.
 - All git operations run in the main repo directory, so a git worktree cannot be created from within another worktree.
 - UI strings are in Simplified Chinese; the logic is locale-agnostic.
 

@@ -6,9 +6,9 @@
  *   - a floating management panel in the shell overlay slot
  *
  * The panel lists every git worktree of the current workspace (main repo
- * stays the registered workspace — this plugin never touches the workspace
- * registry), and supports create / remove / prune through the Host RPC
- * handlers declared in src/host.js.
+ * stays the registered workspace — registration only happens on demand via
+ * the per-row "注册" action), and supports register / create / remove /
+ * prune through the Host RPC handlers declared in src/host.js.
  *
  * Load this file's body into `code.client` of a dynamic Cordis Package
  * (cordis_define), or copy it into a Cordis plugin client entry.
@@ -38,7 +38,7 @@ return {
 
     const css = `
 .wtm-panel {
-  position: fixed; top: 16px; right: 16px; width: 400px; max-height: calc(100vh - 32px);
+  position: fixed; top: 16px; right: 16px; width: 420px; max-height: calc(100vh - 32px);
   display: flex; flex-direction: column; box-sizing: border-box;
   background: var(--dsw-alias-bg-elevated, #fff); color: var(--dsw-alias-label-primary);
   border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px;
@@ -47,13 +47,14 @@ return {
 }
 .wtm-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
 .wtm-title { font-weight: 600; flex: 1; }
-.wtm-sub { color: var(--dsw-alias-label-tertiary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.wtm-sub { color: var(--dsw-alias-label-tertiary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
 .wtm-btn {
   cursor: pointer; border: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-button-elevated-fill, transparent);
   color: var(--dsw-alias-label-primary); border-radius: 6px; padding: 2px 8px; font-size: 12px; line-height: 18px;
 }
 .wtm-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .wtm-btn:disabled { opacity: .5; cursor: default; }
+.wtm-btn-primary { border-color: var(--dsw-alias-state-business-primary, #3b82f6); color: var(--dsw-alias-state-business-primary, #3b82f6); }
 .wtm-close { border: none; background: transparent; cursor: pointer; color: var(--dsw-alias-label-tertiary); font-size: 16px; line-height: 16px; }
 .wtm-body { overflow: auto; padding: 8px 12px; flex: 1; }
 .wtm-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.06)); }
@@ -66,6 +67,7 @@ return {
 .wtm-badge { font-size: 11px; border-radius: 4px; padding: 0 5px; flex: none; }
 .wtm-badge-locked { background: rgba(234,179,8,.18); color: #b45309; }
 .wtm-badge-prunable { background: rgba(239,68,68,.15); color: #dc2626; }
+.wtm-badge-registered { background: rgba(22,163,74,.15); color: #16a34a; }
 .wtm-form { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--dsw-alias-border-l2); }
 .wtm-form-row { display: flex; gap: 6px; }
 .wtm-input {
@@ -149,6 +151,15 @@ return {
         store.patch({ busy: false })
       }
 
+      const doRegister = async (path) => {
+        store.patch({ busy: true, error: '', notice: '' })
+        const res = await call('wt.register', { basePath: basePathRef.current, path })
+        if (res && res.ok) store.patch({ notice: res.message || '已注册为工作区' })
+        else store.patch({ error: (res && res.message) || '注册失败' })
+        store.patch({ busy: false })
+        await refresh(basePathRef.current)
+      }
+
       const doRemove = async (path) => {
         store.patch({ busy: true, error: '', notice: '' })
         const res = await call('wt.remove', { basePath: basePathRef.current, path, force: true })
@@ -177,13 +188,20 @@ return {
         const badges = []
         if (wt.locked) badges.push(React.createElement('span', { key: 'l', className: 'wtm-badge wtm-badge-locked' }, 'locked'))
         if (wt.prunable) badges.push(React.createElement('span', { key: 'p', className: 'wtm-badge wtm-badge-prunable' }, 'prunable'))
-        const action = confirmPath === wt.path
-          ? React.createElement(React.Fragment, null, [
-              React.createElement('span', { key: 'q', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: 12 } }, '确认?'),
-              React.createElement('button', { key: 'y', type: 'button', className: 'wtm-btn', disabled: s.busy, onClick: () => doRemove(wt.path) }, '删除'),
-              React.createElement('button', { key: 'n', type: 'button', className: 'wtm-btn', disabled: s.busy, onClick: () => setConfirmPath('') }, '取消'),
-            ])
-          : React.createElement('button', { type: 'button', className: 'wtm-btn', disabled: s.busy || wt.main, onClick: () => setConfirmPath(wt.path) }, '删除')
+        if (wt.registered) badges.push(React.createElement('span', { key: 'r', className: 'wtm-badge wtm-badge-registered' }, '在工作区'))
+        const actions = []
+        if (!wt.main && !wt.registered) {
+          actions.push(React.createElement('button', { key: 'reg', type: 'button', className: 'wtm-btn wtm-btn-primary', disabled: s.busy, onClick: () => doRegister(wt.path) }, '注册'))
+        }
+        if (confirmPath === wt.path) {
+          actions.push(
+            React.createElement('span', { key: 'q', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: 12 } }, '确认?'),
+            React.createElement('button', { key: 'y', type: 'button', className: 'wtm-btn', disabled: s.busy, onClick: () => doRemove(wt.path) }, '删除'),
+            React.createElement('button', { key: 'n', type: 'button', className: 'wtm-btn', disabled: s.busy, onClick: () => setConfirmPath('') }, '取消'),
+          )
+        } else if (!wt.main) {
+          actions.push(React.createElement('button', { key: 'd', type: 'button', className: 'wtm-btn', disabled: s.busy, onClick: () => setConfirmPath(wt.path) }, '删除'))
+        }
         return React.createElement('div', { key: wt.path, className: 'wtm-row' }, [
           React.createElement('span', { key: 'd', className: dotClass }),
           React.createElement('div', { key: 'n', className: 'wtm-name' }, [
@@ -191,7 +209,7 @@ return {
             React.createElement('div', { key: 'b', className: 'wtm-branch' }, wt.main ? '(主目录) ' : '', wt.branch ? '分支 ' + wt.branch : 'detached', ' · ' + wt.path),
           ]),
           ...badges,
-          action,
+          ...actions,
         ])
       })
 
@@ -218,7 +236,7 @@ return {
             React.createElement('input', { key: 'b', className: 'wtm-input', placeholder: '基分支(可选，默认当天 release 或 HEAD)', value: baseBranch, onChange: (e) => setBaseBranch(e.target.value) }),
             React.createElement('button', { key: 'a', type: 'button', className: 'wtm-btn', disabled: s.busy || !name.trim(), onClick: doAdd }, '创建'),
           ]),
-          React.createElement('div', { key: 'h', className: 'wtm-hint' }, '分支 feat/<issue>-<name>，目录 ../wt/<issue>-<name>，基分支默认 release/当天或 HEAD'),
+          React.createElement('div', { key: 'h', className: 'wtm-hint' }, '分支 feat/<issue>-<name>，目录 ../wt/<issue>-<name>，基分支默认 release/当天或 HEAD；「注册」让 worktree 显示在工作区区域'),
         ]),
       ])
     }
