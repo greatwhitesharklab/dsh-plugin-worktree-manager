@@ -23,9 +23,11 @@ return {
     const shell = ctx.get('shell')
     if (shell === undefined) return
 
-    // Per-session plugin instance: this binding marks ONLY this session's
-    // worktree choice (main branch / a specific worktree).
-    let bound = null
+    // IMPORTANT: the host half of a dynamic plugin is mounted once per process
+    // on the shared `cordis-dynamic` group (root ctx), NOT per session. So all
+    // session bindings must live in a Map keyed by sessionId, and the model
+    // prompt annotation must resolve the CURRENT assembly's agent id.
+    const bindings = new Map()
 
     const shq = (value) => "'" + String(value).replace(/'/g, "'\\''") + "'"
 
@@ -110,8 +112,12 @@ return {
       ctx.effect(() => systemPrompt.context({
         name: 'worktree:session',
         order: 90,
-        text: () => {
-          if (bound === null) return ''
+        text: (context) => {
+          const agent = context && context.agent
+          const id = agent && agent.id
+          if (!id) return ''
+          const bound = bindings.get(id)
+          if (bound === undefined) return ''
           const label = bound.path.split('/').filter(Boolean).slice(-1)[0] || bound.path
           return '本会话的工作目录已绑定到 git worktree「' + label + '」：\n' +
             '- 绝对路径：' + bound.path + '\n' +
@@ -143,7 +149,7 @@ return {
         schema: { type: 'json' },
         render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
       },
-      async execute(args) {
+      async execute(args, exec) {
         const base = await baseDirOf({})
         if (!base) return { ok: false, message: '无法确定主仓库目录（没有可用的工作区）' }
         const action = args && args.action
@@ -189,7 +195,7 @@ return {
           cmd.push(path)
           const res = await runGit(base, cmd)
           if (!res.ok) return res
-          if (bound && bound.path === path) bound = null
+          for (const [sid, b] of bindings) if (b.path === path) bindings.delete(sid)
           return { ok: true, message: '已移除 worktree ' + path }
         }
         if (action === 'use') {
@@ -200,7 +206,8 @@ return {
           if (!res.ok) return res
           const found = res.worktrees.find((wt) => wt.path === path)
           if (!found) return { ok: false, message: '未找到该 worktree：' + path + '（先用 list 查看）' }
-          bound = { path: found.path, branch: found.branch }
+          const sessionId = exec && exec.agent && exec.agent.id
+          if (sessionId) bindings.set(sessionId, { path: found.path, branch: found.branch })
           return { ok: true, bound: { path: found.path, branch: found.branch }, message: '本会话工作目录已绑定 ' + found.path }
         }
         return { ok: false, message: '未知 action：' + String(action) }
@@ -209,33 +216,38 @@ return {
     ctx.effect(() => harness.registerTool(ctx, wtTool), 'worktree: model tool')
 
     // ---- RPC for the input dock (per-session worktree picker).
-    harness.handle('wt.dock', async () => {
+    harness.handle('wt.dock', async (args) => {
       const base = await baseDirOf({})
       if (!base) return { ok: false, message: '无法确定主仓库目录（没有可用的工作区）' }
       const res = await listWorktrees(base)
       if (!res.ok) return res
+      const sessionId = args && args.sessionId
+      const bound = sessionId ? (bindings.get(sessionId) || null) : null
       return { ok: true, basePath: base, worktrees: res.worktrees, bound }
     })
 
     harness.handle('wt.bind', async (args) => {
       const base = await baseDirOf({})
       if (!base) return { ok: false, message: '无法确定主仓库目录（没有可用的工作区）' }
+      const sessionId = args && args.sessionId
+      if (!sessionId) return { ok: false, message: '缺少 sessionId' }
       const path = String((args && args.path) || '').trim()
       const res = await listWorktrees(base)
       if (!res.ok) return res
       if (!path) {
-        bound = null
+        bindings.delete(sessionId)
         return { ok: true, message: '已切回主分支（主目录）' }
       }
       const resolved = path.startsWith('/') ? path : (base + '/../' + path)
       const found = res.worktrees.find((wt) => wt.path === resolved)
       if (!found) return { ok: false, message: '未找到该 worktree：' + path }
-      bound = { path: found.path, branch: found.branch }
+      bindings.set(sessionId, { path: found.path, branch: found.branch })
       return { ok: true, bound: { path: found.path, branch: found.branch }, message: '本会话工作目录已绑定 ' + found.path }
     })
 
-    harness.handle('wt.unbind', async () => {
-      bound = null
+    harness.handle('wt.unbind', async (args) => {
+      const sessionId = args && args.sessionId
+      if (sessionId) bindings.delete(sessionId)
       return { ok: true, message: '已切回主分支（主目录）' }
     })
   },

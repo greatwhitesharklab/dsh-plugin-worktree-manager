@@ -22,9 +22,11 @@ return {
 
     const css = `
 .wtm-dock {
-  display: flex; align-items: center; gap: 8px; box-sizing: border-box;
-  width: calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance));
-  margin: 0 auto; padding: 0 8px; font-size: 12px; line-height: 20px;
+  box-sizing: border-box;
+  width: calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));
+  margin: 0 auto;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 8px; font-size: 12px; line-height: 20px;
   color: var(--dsw-alias-label-secondary); min-height: 26px; position: relative;
 }
 .wtm-dock-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
@@ -37,7 +39,7 @@ return {
 .wtm-dock-chip:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .wtm-dock-chip.wtm-bound { border-color: var(--dsw-alias-state-business-primary, #3b82f6); color: var(--dsw-alias-state-business-primary, #3b82f6); }
 .wtm-menu {
-  position: absolute; top: calc(100% + 4px); left: 8px; z-index: 1200; min-width: 260px; max-width: 420px;
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 1200; min-width: 260px; max-width: 420px;
   background: var(--dsw-alias-bg-elevated, #fff); color: var(--dsw-alias-label-primary);
   border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.16);
   padding: 6px; max-height: 320px; overflow: auto; pointer-events: auto;
@@ -63,7 +65,9 @@ return {
       }
     }
 
-    function WorktreeDock({ session, input }) {
+    // sessionId is provided by the framework (session-scope slot). The dock
+    // must pass it explicitly so the Host stores the binding PER SESSION.
+    function WorktreeDock({ sessionId }) {
       const [open, setOpen] = React.useState(false)
       const [list, setList] = React.useState(null)
       const [current, setCurrent] = React.useState(null)
@@ -71,7 +75,7 @@ return {
       const [notice, setNotice] = React.useState('')
 
       const load = async () => {
-        const res = await call('wt.dock', {})
+        const res = await call('wt.dock', { sessionId })
         if (res && res.ok) {
           setList(res.worktrees || [])
           setCurrent(res.bound)
@@ -80,11 +84,11 @@ return {
 
       React.useEffect(() => {
         load()
-      }, [session && session.sessionId])
+      }, [sessionId])
 
       const pick = async (path) => {
         setBusy(true); setNotice('')
-        const res = await call(path ? 'wt.bind' : 'wt.unbind', { path })
+        const res = await call(path ? 'wt.bind' : 'wt.unbind', { sessionId, path })
         setBusy(false)
         if (res && res.ok) {
           setOpen(false)
