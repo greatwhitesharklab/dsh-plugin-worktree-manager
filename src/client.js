@@ -1,12 +1,14 @@
 /**
- * Client (browser) half of the dsh-plugin-worktree-manager plugin (v3).
+ * Client (browser) half of the dsh-plugin-worktree-manager plugin (v5).
  *
  * No separate management panel anymore. One additive contribution:
  *   - `conversation.input.dock` "worktree-dock": a slim per-session row
  *     above the composer showing this session's working directory
- *     (main branch by default, or a bound worktree). Click the chip to
- *     choose "当前分支（主目录）" or any worktree of the main repo; the
- *     binding is applied via the Host RPC wt.bind / wt.unbind.
+ *     (main branch by default, or a bound worktree). The choice is made
+ *     when creating a session; once the session is active the chip is
+ *     LOCKED (composerPhase === 'active') so the worktree cannot be
+ *     changed mid-conversation. The binding is applied via the Host RPC
+ *     wt.bind / wt.unbind.
  *
  * Worktree create/remove is owned by the AGENT via the model Tool
  * `worktree` (see src/host.js) — no manual create form in the UI.
@@ -25,8 +27,13 @@ return {
   box-sizing: border-box;
   width: calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));
   margin: 0 auto;
+}
+.wtm-dock-bar {
+  box-sizing: border-box;
+  width: 100%; max-width: calc(var(--dsh-composer-card-max-width) - 4 * var(--dsh-composer-dock-inset));
+  margin: 0 auto;
   display: flex; align-items: center; gap: 8px;
-  padding: 0 8px; font-size: 12px; line-height: 20px;
+  padding: 2px 8px; font-size: 12px; line-height: 20px;
   color: var(--dsw-alias-label-secondary); min-height: 26px; position: relative;
 }
 .wtm-dock-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
@@ -34,10 +41,14 @@ return {
 .wtm-dock-chip {
   cursor: pointer; border: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-button-elevated-fill, transparent);
   color: var(--dsw-alias-label-primary); border-radius: 999px; padding: 0 10px; font-size: 12px; line-height: 22px;
-  max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.wtm-dock-chip:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.wtm-dock-chip:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.wtm-dock-chip:disabled { opacity: .7; cursor: default; }
 .wtm-dock-chip.wtm-bound { border-color: var(--dsw-alias-state-business-primary, #3b82f6); color: var(--dsw-alias-state-business-primary, #3b82f6); }
+.wtm-lock {
+  font-size: 11px; color: var(--dsw-alias-label-tertiary); display: inline-flex; align-items: center; gap: 4px;
+}
 .wtm-menu {
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 1200; min-width: 260px; max-width: 420px;
   background: var(--dsw-alias-bg-elevated, #fff); color: var(--dsw-alias-label-primary);
@@ -65,14 +76,21 @@ return {
       }
     }
 
-    // sessionId is provided by the framework (session-scope slot). The dock
-    // must pass it explicitly so the Host stores the binding PER SESSION.
-    function WorktreeDock({ sessionId }) {
+    // sessionId + composerPhase come from the framework (session-scope slot).
+    // The chip is LOCKED once the session is active (composerPhase 'active'):
+    // a worktree choice is made when creating a session, not mid-conversation.
+    function WorktreeDock({ sessionId, useSession }) {
       const [open, setOpen] = React.useState(false)
       const [list, setList] = React.useState(null)
       const [current, setCurrent] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [notice, setNotice] = React.useState('')
+
+      let phase = 'blank'
+      try {
+        phase = useSession ? useSession((s) => s.composerPhase) : 'blank'
+      } catch (e) {}
+      const locked = phase === 'active'
 
       const load = async () => {
         const res = await call('wt.dock', { sessionId })
@@ -122,23 +140,25 @@ return {
         ]))
       }
 
-      return React.createElement('div', { className: 'wtm-dock' }, [
+      return React.createElement('div', { className: 'wtm-dock' }, React.createElement('div', { className: 'wtm-dock-bar' }, [
         React.createElement('span', { key: 'g', className: 'wtm-dock-glyph' }, '⎇'),
         React.createElement('span', { key: 'l', className: 'wtm-dock-label' }, '会话工作目录:'),
         React.createElement('button', {
           key: 'c',
           type: 'button',
           className: 'wtm-dock-chip' + (current ? ' wtm-bound' : ''),
-          disabled: busy,
+          disabled: busy || locked,
+          title: locked ? '会话进行中，不能更换 worktree' : '选择本会话的工作目录',
           onClick: () => { setOpen((o) => !o); if (!list) load() },
         }, current ? (boundName + (current.branch ? ' · ' + current.branch : '')) : '当前分支（主目录）'),
+        locked ? React.createElement('span', { key: 'lock', className: 'wtm-lock' }, '🔒 会话中锁定') : null,
         notice ? React.createElement('span', { key: 'n', style: { color: 'var(--dsw-alias-state-success-primary)', fontSize: 11 } }, notice) : null,
-        open ? React.createElement('div', { key: 'm', className: 'wtm-menu' }, [
+        !locked && open ? React.createElement('div', { key: 'm', className: 'wtm-menu' }, [
           React.createElement('div', { key: 'h', className: 'wtm-menu-head' }, '选择本会话的工作目录'),
           ...rows,
-          React.createElement('div', { key: 't', className: 'wtm-menu-hint' }, 'worktree 的新建/删除由 AI 管理：直接说"帮我在 issue 587 开个 worktree 做 loan migration"，模型会执行。'),
+          React.createElement('div', { key: 't', className: 'wtm-menu-hint' }, '创建会话时确定；会话开始后锁定。worktree 的新建/删除由 AI 管理。'),
         ]) : null,
-      ])
+      ]))
     }
 
     slots.inject('conversation.input.dock', () => slots.register(

@@ -1,16 +1,21 @@
 /**
- * Host half of the dsh-plugin-worktree-manager plugin (v3).
+ * Host half of the dsh-plugin-worktree-manager plugin (v5).
  *
  * Design (Codex-style): a worktree is NOT a separate DSH workspace. Sessions
  * stay in the main workspace; each session can be *bound* to one worktree,
- * which marks that choice into the model's prompt for that session only
- * (the plugin host half is a per-session instance, so the systemPrompt
- * context contribution below affects only this session's assemblies).
+ * which marks that choice into the model's prompt for that session only.
+ *
+ * IMPORTANT: the host half of a dynamic plugin is mounted ONCE per process on
+ * the shared `cordis-dynamic` group (root ctx), NOT per session. So all
+ * bindings live in a Map keyed by sessionId, and the model prompt annotation
+ * resolves the CURRENT assembly's agent id. Binding also prefixes the session
+ * title with `[wt/<name>] ` so the left session/workspace list shows the
+ * worktree and its branch.
  *
  * Capabilities:
  *   - model Tool `worktree` (harness.defineTool/registerTool):
- *       list / add / remove / use  — the AGENT manages worktrees, the user
- *       just says "帮我开个 worktree 587 xxx".
+ *       list / add / remove / use / unuse — the AGENT manages worktrees, the
+ *       user just says "帮我开个 worktree 587 xxx".
  *   - RPC wt.dock  -> input-dock picker data (worktrees + current binding)
  *   - RPC wt.bind / wt.unbind -> bind this session to a worktree / main
  *
@@ -23,10 +28,8 @@ return {
     const shell = ctx.get('shell')
     if (shell === undefined) return
 
-    // IMPORTANT: the host half of a dynamic plugin is mounted once per process
-    // on the shared `cordis-dynamic` group (root ctx), NOT per session. So all
-    // session bindings must live in a Map keyed by sessionId, and the model
-    // prompt annotation must resolve the CURRENT assembly's agent id.
+    // All session bindings live here; per-session because the host half is
+    // shared across the whole process.
     const bindings = new Map()
 
     const shq = (value) => "'" + String(value).replace(/'/g, "'\\''") + "'"
@@ -104,9 +107,36 @@ return {
       return { ok: true, worktrees: parsePorcelain(res.stdout, base) }
     }
 
-    // ---- Mark this session's worktree choice into the model prompt.
-    // Because the plugin host half is a per-session instance, this context
-    // contribution affects ONLY this session's assemblies.
+    // ---- Left-side session list marker: prefix the session title with the
+    // worktree label so the workspace/session browser shows it + the branch.
+    function withTitle(prefix, rest) {
+      if (!rest) return prefix
+      const clean = rest.replace(/^\[wt\/[^\]]*\]\s*/, '')
+      return prefix + clean
+    }
+    async function markSessionTitle(sessionId, bound) {
+      if (!sessionId) return
+      try {
+        const sessions = ctx.get('sessions')
+        const titleService = ctx.get('sessionTitle')
+        if (!sessions || !titleService) return
+        const session = sessions.get(sessionId)
+        if (!session) return
+        const snapshot = titleService.get(session)
+        const base = snapshot ? snapshot.title : ''
+        if (bound === null) {
+          const clean = base.replace(/^\[wt\/[^\]]*\]\s*/, '')
+          titleService.rename(session, clean || '新会话')
+        } else {
+          const label = bound.path.split('/').filter(Boolean).slice(-1)[0] || bound.path
+          const prefix = '[wt/' + label + '] '
+          titleService.rename(session, withTitle(prefix, base))
+        }
+      } catch (e) {}
+    }
+
+    // ---- Per-session prompt annotation. The host half is global, so resolve
+    // the CURRENT assembly's agent (session) and look up its own binding.
     const systemPrompt = ctx.get('systemPrompt')
     if (systemPrompt !== undefined) {
       ctx.effect(() => systemPrompt.context({
@@ -127,9 +157,8 @@ return {
       }), 'worktree: session context')
     }
 
-    // ---- Model tool: I (the agent) manage worktrees.
-    // Dynamic plugins MUST register model tools via harness.defineTool +
-    // harness.registerTool (ctx.tools.register rejects non-harness tools).
+    // ---- Model tool: the agent manages worktrees. `use` binds the CALLING
+    // session (exec.agent.id), never a global state.
     const wtTool = harness.defineTool({
       name: 'worktree',
       description: '管理当前工作区（主仓库）的 git worktree：列出、创建、删除、绑定当前会话的工作目录。创建遵循约定：分支 feat/<issue>-<name>、目录 ../wt/<issue>-<name>、基分支默认当天 release/YYYYMMDD（不存在则 HEAD）。用户说“开个 worktree / 帮我建 worktree”时使用此工具。',
@@ -137,8 +166,8 @@ return {
         action: {
           type: 'string',
           required: true,
-          enum: ['list', 'add', 'remove', 'use'],
-          description: 'list=列出所有 worktree；add=新建；remove=删除；use=把当前会话绑定到某个 worktree（之后本会话文件操作都在该目录）。'
+          enum: ['list', 'add', 'remove', 'use', 'unuse'],
+          description: 'list=列出所有 worktree；add=新建；remove=删除；use=把当前会话绑定到某个 worktree（之后本会话文件操作都在该目录）；unuse=解除绑定回到主分支。'
         },
         issue: { type: 'string', description: 'add 时可选：issue 号，作为分支/目录前缀，如 587 或 NL-581' },
         name: { type: 'string', description: 'add 时必填：语义名，如 loan-migration-data-repair' },
@@ -195,7 +224,7 @@ return {
           cmd.push(path)
           const res = await runGit(base, cmd)
           if (!res.ok) return res
-          for (const [sid, b] of bindings) if (b.path === path) bindings.delete(sid)
+          for (const [sid, b] of bindings) if (b.path === path) { bindings.delete(sid); markSessionTitle(sid, null) }
           return { ok: true, message: '已移除 worktree ' + path }
         }
         if (action === 'use') {
@@ -207,15 +236,26 @@ return {
           const found = res.worktrees.find((wt) => wt.path === path)
           if (!found) return { ok: false, message: '未找到该 worktree：' + path + '（先用 list 查看）' }
           const sessionId = exec && exec.agent && exec.agent.id
-          if (sessionId) bindings.set(sessionId, { path: found.path, branch: found.branch })
+          if (sessionId) {
+            bindings.set(sessionId, { path: found.path, branch: found.branch })
+            markSessionTitle(sessionId, { path: found.path, branch: found.branch })
+          }
           return { ok: true, bound: { path: found.path, branch: found.branch }, message: '本会话工作目录已绑定 ' + found.path }
+        }
+        if (action === 'unuse') {
+          const sessionId = exec && exec.agent && exec.agent.id
+          if (sessionId) {
+            bindings.delete(sessionId)
+            markSessionTitle(sessionId, null)
+          }
+          return { ok: true, message: '已切回主分支（主目录）' }
         }
         return { ok: false, message: '未知 action：' + String(action) }
       },
     })
     ctx.effect(() => harness.registerTool(ctx, wtTool), 'worktree: model tool')
 
-    // ---- RPC for the input dock (per-session worktree picker).
+    // ---- RPC: bindings are PER SESSION; Client passes its own sessionId.
     harness.handle('wt.dock', async (args) => {
       const base = await baseDirOf({})
       if (!base) return { ok: false, message: '无法确定主仓库目录（没有可用的工作区）' }
@@ -236,18 +276,23 @@ return {
       if (!res.ok) return res
       if (!path) {
         bindings.delete(sessionId)
+        markSessionTitle(sessionId, null)
         return { ok: true, message: '已切回主分支（主目录）' }
       }
       const resolved = path.startsWith('/') ? path : (base + '/../' + path)
       const found = res.worktrees.find((wt) => wt.path === resolved)
       if (!found) return { ok: false, message: '未找到该 worktree：' + path }
       bindings.set(sessionId, { path: found.path, branch: found.branch })
+      markSessionTitle(sessionId, { path: found.path, branch: found.branch })
       return { ok: true, bound: { path: found.path, branch: found.branch }, message: '本会话工作目录已绑定 ' + found.path }
     })
 
     harness.handle('wt.unbind', async (args) => {
       const sessionId = args && args.sessionId
-      if (sessionId) bindings.delete(sessionId)
+      if (sessionId) {
+        bindings.delete(sessionId)
+        markSessionTitle(sessionId, null)
+      }
       return { ok: true, message: '已切回主分支（主目录）' }
     })
   },
