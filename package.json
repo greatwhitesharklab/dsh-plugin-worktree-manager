@@ -15,11 +15,11 @@
   "author": "Fred Gu",
   "repository": {
     "type": "git",
-    "url": "https://github.com/FredGoo/dsh-plugin-worktree-manager.git"
+    "url": "https://github.com/greatwhitesharklab/dsh-plugin-worktree-manager.git"
   },
-  "homepage": "https://github.com/FredGoo/dsh-plugin-worktree-manager#readme",
+  "homepage": "https://github.com/greatwhitesharklab/dsh-plugin-worktree-manager#readme",
   "bugs": {
-    "url": "https://github.com/FredGoo/dsh-plugin-worktree-manager/issues"
+    "url": "https://github.com/greatwhitesharklab/dsh-plugin-worktree-manager/issues"
   },
   "files": [
     "src"
