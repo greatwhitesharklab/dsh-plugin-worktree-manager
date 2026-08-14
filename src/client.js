@@ -18,7 +18,7 @@
  * Plain JavaScript only: React.createElement, no JSX/TS/import.
  */
 return {
-  inject: ['timer'],
+  inject: ['timer', 'sessions'],
   apply(ctx) {
     const slots = ctx.get('slots')
     if (slots === undefined) return
