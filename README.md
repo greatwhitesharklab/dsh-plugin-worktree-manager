@@ -1,5 +1,7 @@
 # dsh-plugin-worktree-manager
 
+> **English** · [中文](README.zh-CN.md)
+
 Manage `git worktree`s of your current DeepSeek Harness workspace — right from the DSH sidebar. The workspace stays the main repository; this plugin lists, creates, removes and prunes the worktrees it manages, without touching the workspace registry.
 
 ## ✨ Features
