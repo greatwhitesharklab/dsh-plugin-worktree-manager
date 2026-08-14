@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-worktree-manager",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Manage git worktrees of the current DSH workspace from a sidebar panel: list, create (feat/<issue>-<name> on ../wt/), remove, and prune.",
   "keywords": [
     "dsh",
